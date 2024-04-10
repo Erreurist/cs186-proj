@@ -80,43 +80,154 @@ class InnerNode extends BPlusNode {
     // See BPlusNode.get.
     @Override
     public LeafNode get(DataBox key) {
-        // TODO(proj2): implement
-
-        return null;
+        // TTODO(proj2): implement
+        int k = 0;
+        if (key.compareTo(keys.get(keys.size() - 1)) >= 0) {
+            k = keys.size();
+        }
+        for (int i = 0; i < keys.size() - 1; i++) {
+            if (key.compareTo(keys.get(i)) >= 0 && key.compareTo(keys.get(i+1)) < 0) {
+                k = i + 1;
+                break;
+            }
+        }
+        return BPlusNode.fromBytes(metadata, bufferManager, treeContext, children.get(k)).get(key);
     }
 
     // See BPlusNode.getLeftmostLeaf.
     @Override
     public LeafNode getLeftmostLeaf() {
         assert(children.size() > 0);
-        // TODO(proj2): implement
-
-        return null;
+        // TTODO(proj2): implement
+        return BPlusNode.fromBytes(metadata, bufferManager, treeContext, children.get(0)).getLeftmostLeaf();
     }
 
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
-        // TODO(proj2): implement
+        // TTODO(proj2): implement
+        int order = metadata.getOrder();
+        int k = keys.size();
+        // 10 20 30 40    insert  9
+        for (int i = 0; i < keys.size(); i++) {
+            if (keys.get(i).compareTo(key) > 0) {
+                k = i;
+                break;
+            }
+        }
+        Optional<Pair<DataBox, Long>> leafRet = BPlusNode.fromBytes(metadata, bufferManager, treeContext, children.get(k)).put(key, rid);
+        Optional<Pair<DataBox, Long>> res = Optional.empty();
+        if (leafRet.isPresent()) {
+            Pair<DataBox, Long> pair = leafRet.get();
+            DataBox split_key = pair.getFirst();
+            long right_node_page_num = pair.getSecond();
+            List<DataBox> newKeys = new ArrayList<>();
+            List<Long> newChildren = new ArrayList<>();
+            boolean flag = true;
+            if (split_key.compareTo(keys.get(0)) < 0) {
+                newChildren.add(children.get(0));
+                newChildren.add(right_node_page_num);
+                newKeys.add(split_key);
+                for (int i = 1; i < children.size(); i++) {
+                    newChildren.add(children.get(i));
+                    newKeys.add(keys.get(i - 1));
+                }
+            } else {
+                for (int i = 0; i < keys.size(); i++) {
+                    if (flag) {
+                        if (keys.get(i).compareTo(split_key) > 0) {
+                            flag = false;
+                            newKeys.add(split_key);
+                            newChildren.add(right_node_page_num);
+                        }
+                    }
+                    if (i == 0) {
+                        newChildren.add(children.get(i));
+                    }
+                    newKeys.add(keys.get(i));
+                    newChildren.add(children.get(i + 1));
+                }
+                if (keys.size() == newKeys.size()) {
+                    newKeys.add(split_key);
+                    newChildren.add(right_node_page_num);
+                }
+            }
 
-        return Optional.empty();
+            if (keys.size() == 2 * metadata.getOrder()) {
+                keys.clear();
+                children.clear();
+                for (int i = 0; i < order; i++) {
+                    keys.add(newKeys.get(i));
+                    children.add(newChildren.get(i));
+                }
+                children.add(newChildren.get(order));
+                List<DataBox> rightKeys = new ArrayList<>();
+                List<Long> rightChidren = new ArrayList<>();
+                for (int i = order + 1; i < 2 * order + 1; i++) {
+                    rightKeys.add(newKeys.get(i));
+                    rightChidren.add(newChildren.get(i));
+                }
+                rightChidren.add(newChildren.get(2 * order + 1));
+                InnerNode rightInnerNode = new InnerNode(metadata, bufferManager, rightKeys, rightChidren, treeContext);
+                res = Optional.of(new Pair(newKeys.get(order), rightInnerNode.getPage().getPageNum()));
+            } else {
+                keys = new ArrayList<>(newKeys);
+                children = new ArrayList<>(newChildren);
+            }
+        }
+        sync();
+        return res;
     }
 
     // See BPlusNode.bulkLoad.
     @Override
     public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
             float fillFactor) {
-        // TODO(proj2): implement
-
-        return Optional.empty();
+        // TTODO(proj2): implement
+        Optional<Pair<DataBox, Long>> res = Optional.empty();
+        while (data.hasNext()) {
+            Optional<Pair<DataBox, Long>> leafRet = BPlusNode.fromBytes(metadata, bufferManager, treeContext, children.get(children.size() - 1)).bulkLoad(data, fillFactor);
+            if (leafRet.isPresent()) {
+                Pair<DataBox, Long> pair = leafRet.get();
+                DataBox split_key = pair.getFirst();
+                long right_node_page_num = pair.getSecond();
+                keys.add(split_key);
+                children.add(right_node_page_num);
+                if (keys.size() > 2 * metadata.getOrder()) {
+                    int order = metadata.getOrder();
+                    List<DataBox> newKeys = new ArrayList<>(keys);
+                    List<Long> newChildren = new ArrayList<>(children);
+                    keys.clear();
+                    children.clear();
+                    for (int i = 0; i < order; i++) {
+                        keys.add(newKeys.get(i));
+                        children.add(newChildren.get(i));
+                    }
+                    children.add(newChildren.get(order));
+                    List<DataBox> rightKeys = new ArrayList<>();
+                    List<Long> rightChidren = new ArrayList<>();
+                    for (int i = order + 1; i < 2 * order + 1; i++) {
+                        rightKeys.add(newKeys.get(i));
+                        rightChidren.add(newChildren.get(i));
+                    }
+                    rightChidren.add(newChildren.get(2 * order + 1));
+                    InnerNode rightInnerNode = new InnerNode(metadata, bufferManager, rightKeys, rightChidren, treeContext);
+                    res = Optional.of(new Pair(newKeys.get(order), rightInnerNode.getPage().getPageNum()));
+                    break;
+                }
+            }
+        }
+        sync();
+        return res;
     }
 
     // See BPlusNode.remove.
     @Override
     public void remove(DataBox key) {
-        // TODO(proj2): implement
-
-        return;
+        // TTODO(proj2): implement
+        LeafNode leafNode = get(key);
+        leafNode.remove(key);
+        sync();
     }
 
     // Helpers /////////////////////////////////////////////////////////////////
