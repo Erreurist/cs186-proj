@@ -139,7 +139,50 @@ public class SortMergeOperator extends JoinOperator {
          * or null if there are no more records to join.
          */
         private Record fetchNextRecord() {
-            // TODO(proj3_part1): implement
+            // TTODO(proj3_part1): implement
+            if (leftRecord == null) {
+                return null;
+            }
+            while (leftRecord != null) {
+                if (!marked) {
+                    while (compare(leftRecord, rightRecord) < 0) {
+                        leftRecord = leftIterator.next();
+                    }
+                    while (compare(leftRecord, rightRecord) > 0) {
+                        rightRecord = rightIterator.next();
+                    }
+                    marked = true;
+                    rightIterator.markPrev();
+                }
+                if (compare(leftRecord, rightRecord) == 0) {
+                    Record tmpRecord = rightRecord;
+                    if (rightIterator.hasNext()) {
+                        rightRecord = rightIterator.next();
+                        return leftRecord.concat(tmpRecord);
+                    } else {
+                        rightIterator.reset();
+                        Record res = leftRecord.concat(tmpRecord);
+                        rightRecord = rightIterator.next();
+                        if (leftIterator.hasNext()) {
+                            leftRecord = leftIterator.next();
+                        } else {
+                            leftRecord = null;
+                        }
+                        return res;
+                    }
+                }
+                else {
+                    rightIterator.reset();
+                    rightRecord = rightIterator.next();
+                    if (leftIterator.hasNext()) {
+                        leftRecord = leftIterator.next();
+                    } else {
+                        leftRecord = null;
+                        return null;
+                    }
+                    marked = false;
+                }
+            }
             return null;
         }
 
