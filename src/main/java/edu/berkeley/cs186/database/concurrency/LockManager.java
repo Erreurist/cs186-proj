@@ -130,7 +130,9 @@ public class LockManager {
                 if (!checkCompatible(lockRequest.lock.lockType, lockRequest.transaction.getTransNum())) {
                     break;
                 }
-                grantOrUpdateLock(lockRequest.lock);
+                waitingQueue.removeFirst();
+                getResourceEntry(lockRequest.lock.name).grantOrUpdateLock(lockRequest.lock);
+//                grantOrUpdateLock(lockRequest.lock);
                 lockRequest.transaction.unblock();
             }
         }
@@ -199,7 +201,7 @@ public class LockManager {
         // move the synchronized block elsewhere if you wish.
         boolean shouldBlock;
         for (Lock lock : getLocks(transaction)) {
-            if (lock.name == name) {
+            if (lock.name == name && lock.lockType == lockType) {
                 throw new DuplicateLockRequestException("a lock on `name` is already held " +
                         "by `transaction` and isn't being released");
             }
@@ -214,11 +216,11 @@ public class LockManager {
             throw new NoLockHeldException("can't release!");
         }
         synchronized (this) {
-            shouldBlock = !getResourceEntry(name).checkCompatible(lockType, transaction.getTransNum()) || !getResourceEntry(name).waitingQueue.isEmpty();
+            shouldBlock = !getResourceEntry(name).checkCompatible(lockType, transaction.getTransNum());
             if (!shouldBlock) {
                 getResourceEntry(name).grantOrUpdateLock(new Lock(name, lockType, transaction.getTransNum()));
                 for (Lock lock : releasedLocks) {
-                    getResourceEntry(name).releaseLock(lock);
+                    getResourceEntry(lock.name).releaseLock(lock);
                 }
             } else {
                 transaction.prepareBlock();
@@ -282,20 +284,26 @@ public class LockManager {
             throws NoLockHeldException {
         // TTODO(proj4_part1): implement
         // You may modify any part of this method.
-        boolean canRealease = false;
-        Lock releasedLock = null;
-        for (Lock lock : getLocks(transaction)) {
-            if (lock.name == name) {
-                canRealease = true;
-                releasedLock = lock;
-                break;
-            }
-        }
-        if (!canRealease) {
-            throw new NoLockHeldException("Can't be released!");
-        }
+        long transNum = transaction.getTransNum();
         synchronized (this) {
-            getResourceEntry(name).releaseLock(releasedLock);
+            Lock releasedLock = null;
+            for (Lock lock : getLocks(transaction)) {
+                if (lock.name == name) {
+                    releasedLock = lock;
+                    break;
+                }
+            }
+            if (getResourceEntry(name).getTransactionLockType(transNum, name) == LockType.NL) {
+                throw new NoLockHeldException("Can't be released!");
+            }
+            ResourceEntry entry = getResourceEntry(name);
+//            if (releasedLock == null) {
+//                throw new NoLockHeldException("Can't be released!");
+//            }
+            LockType lockType = entry.getTransactionLockType(transNum, name);
+            Lock lock = new Lock(name, lockType, transNum);
+            entry.releaseLock(lock);
+//            getResourceEntry(releasedLock.name).releaseLock(releasedLock);
         }
     }
 
@@ -326,32 +334,29 @@ public class LockManager {
         // TTODO(proj4_part1): implement
         // You may modify any part of this method.
         boolean shouldBlock = false;
-        Lock replacedLock = null;
-        for (Lock lock : getLocks(transaction)) {
-            if (lock.name == name) {
-                replacedLock = lock;
-                break;
-            }
-        }
-        if (replacedLock == null) {
-            throw new NoLockHeldException("No such lock!");
-        }
-        if (replacedLock.lockType == newLockType) {
-            throw new DuplicateLockRequestException("Dupliacate lock!");
-        }
-        if (!LockType.substitutable(newLockType, replacedLock.lockType)) {
-            throw new InvalidLockException("Invalid!");
-        }
+        long transNum = transaction.getTransNum();
         synchronized (this) {
-            shouldBlock = !getResourceEntry(name).checkCompatible(newLockType, transaction.getTransNum());
+            ResourceEntry entry = getResourceEntry(name);
+            if (entry.getTransactionLockType(transNum, name) == newLockType) {
+                throw new DuplicateLockRequestException("transaction " + transNum + " already has a " + newLockType + " " + name);
+            }
+            if (entry.getTransactionLockType(transNum, name) == LockType.NL) {
+                throw new NoLockHeldException("transaction " + transNum + " has no lock on " + name);
+            }
+            if (!LockType.substitutable(newLockType, entry.getTransactionLockType(transNum, name))) {
+                throw new InvalidLockException("the new lock type is not substitutable for the old lock");
+            }
+            shouldBlock = !getResourceEntry(name).checkCompatible(newLockType, transNum);
+            Lock lock = new Lock(name, newLockType, transNum);
             if (!shouldBlock) {
-                getResourceEntry(name).grantOrUpdateLock(new Lock(name, newLockType, transaction.getTransNum()));
+                getResourceEntry(name).grantOrUpdateLock(lock);
             } else {
+                LockRequest request = new LockRequest(transaction, lock);
+                entry.addToQueue(request, true);
                 transaction.prepareBlock();
             }
         }
         if (shouldBlock) {
-            getResourceEntry(name).addToQueue(new LockRequest(transaction, new Lock(name, newLockType, transaction.getTransNum())), true);
             transaction.block();
         }
     }

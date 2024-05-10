@@ -2,6 +2,9 @@ package edu.berkeley.cs186.database.concurrency;
 
 import edu.berkeley.cs186.database.TransactionContext;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * LockUtil is a declarative layer which simplifies multigranularity lock
  * acquisition for the user (you, in the last task of Part 2). Generally
@@ -41,8 +44,83 @@ public class LockUtil {
         LockType effectiveLockType = lockContext.getEffectiveLockType(transaction);
         LockType explicitLockType = lockContext.getExplicitLockType(transaction);
 
-        // TODO(proj4_part2): implement
-        return;
+        // TTODO(proj4_part2): implement
+        if (requestType == LockType.NL) {
+            return;
+        }
+        if (lockContext.getExplicitLockType(transaction) == LockType.IS) {
+            if (requestType == LockType.S) {
+                List<ResourceName> tmpResorceNames = new ArrayList<>();
+                tmpResorceNames.add(lockContext.getResourceName());
+                for (ResourceName name : lockContext.allDescendants(transaction)) {
+                    if (LockContext.fromResourceName(lockContext.lockman, name).getExplicitLockType(transaction) == LockType.S) {
+                        tmpResorceNames.add(name);
+                    }
+                }
+                lockContext.acquireAndRelease(transaction, LockType.S, tmpResorceNames);
+                return;
+            }
+        }
+        if (lockContext.getExplicitLockType(transaction) == LockType.NL) {
+            LockContext context = lockContext.parentContext();
+            List<LockContext> list = new ArrayList<>();
+            while (context != null) {
+                list.add(context);
+                context = context.parent;
+            }
+            for (int i = list.size() - 1; i >= 0; i--) {
+                if (requestType == LockType.S) {
+                    if (list.get(i).getExplicitLockType(transaction) == LockType.NL) {
+                        list.get(i).acquire(transaction, LockType.IS);
+                    }
+                } else {
+                    if (list.get(i).getExplicitLockType(transaction) == LockType.NL) {
+                        list.get(i).acquire(transaction, LockType.IX);
+                    } else if (list.get(i).getExplicitLockType(transaction) == LockType.IS) {
+                        list.get(i).promote(transaction, LockType.IX);
+                    }
+
+                }
+            }
+            lockContext.acquire(transaction, requestType);
+            return;
+        }
+        if (lockContext.getEffectiveLockType(transaction) == LockType.IX) {
+            if (requestType == LockType.S) {
+                List<ResourceName> tmpResorceNames = new ArrayList<>();
+                tmpResorceNames.add(lockContext.getResourceName());
+                for (ResourceName name : lockContext.allDescendants(transaction)) {
+                    if (LockContext.fromResourceName(lockContext.lockman, name).getExplicitLockType(transaction) == LockType.S) {
+                        tmpResorceNames.add(name);
+                    }
+                }
+                lockContext.acquireAndRelease(transaction, LockType.SIX, tmpResorceNames);
+
+                return;
+            }
+        }
+        if (LockType.substitutable(requestType, lockContext.getExplicitLockType(transaction))) {
+            LockContext context = lockContext.parentContext();
+            List<LockContext> list = new ArrayList<>();
+            while (context != null) {
+                list.add(context);
+                context = context.parent;
+            }
+            for (int i = list.size() - 1; i >= 0; i--) {
+                list.get(i).promote(transaction, LockType.IX);
+
+            }
+            lockContext.promote(transaction, requestType);
+            return;
+        }
+
+        if (lockContext.getEffectiveLockType(transaction) == LockType.IX && requestType == LockType.S) {
+            return;
+        }
+
+
+
+
     }
 
     // TODO(proj4_part2) add any helper methods you want
